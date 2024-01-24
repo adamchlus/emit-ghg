@@ -25,6 +25,7 @@ from spectral.io import envi
 
 import sys
 import scipy
+from scipy import linalg
 import scipy.ndimage
 import numpy as np
 from utils import envi_header, write_bil_chunk
@@ -45,39 +46,39 @@ else:
 
 def main(input_args=None):
     parser = argparse.ArgumentParser(description="Robust MF")
-    parser.add_argument('radiance_file', type=str,  metavar='INPUT', help='path to input image')   
+    parser.add_argument('radiance_file', type=str,  metavar='INPUT', help='path to input image')
     parser.add_argument('library', type=str,  metavar='LIBRARY', help='path to target library file')
-    parser.add_argument('output_file', type=str,  metavar='OUTPUT', help='path for output image (mf ch4 ppm)')    
+    parser.add_argument('output_file', type=str,  metavar='OUTPUT', help='path for output image (mf ch4 ppm)')
 
-    parser.add_argument('--covariance_style', type=str, default='looshrinkage', choices=['empirical', 'looshrinkage'], help='style of covariance estimation') 
-    parser.add_argument('--fixed_alpha', type=float, default=None, help='fixed value for shrinkage (with looshrinkage covariance style only)')    
+    parser.add_argument('--covariance_style', type=str, default='looshrinkage', choices=['empirical', 'looshrinkage'], help='style of covariance estimation')
+    parser.add_argument('--fixed_alpha', type=float, default=None, help='fixed value for shrinkage (with looshrinkage covariance style only)')
     parser.add_argument('--num_cores', type=int, default=-1, help='number of cores (-1 (default))')
     parser.add_argument('--n_mc', type=int, default=10, help='number of monte carlo runs')
     parser.add_argument('--mc_bag_fraction',type=float, default=0.7, help='fraction of data to use in each MC instance')
-    parser.add_argument('--ray_temp_dir', type=str, default=None, help='ray temp directory (None (default))')    
-    parser.add_argument('--wavelength_range', nargs='+', type=float, default=None, help='wavelengths to use: None = default for gas, 2x values = min/max pairs of regions')         
-    parser.add_argument('--remove_dominant_pcs',action='store_true', help='remove dominant PCs from covariance calculation')         
-    parser.add_argument('--subsample_strategy',type=str,choices=['random','spatial_blocks'], help='sampling strategy for mc runs')         
-    parser.add_argument('--l1b_bandmask_file',type=str,default=None, help='path to the l1b bandmask file for saturation')         
-    parser.add_argument('--l2a_mask_file', type=str,  help='path to l2a mask image for clouds and water')   
-    parser.add_argument('--mask_clouds_water',action='store_true', help='mask clouds and water from output matched filter')         
-    parser.add_argument('--mask_saturation',action='store_true', help='mask saturated pixels from output matched filter')         
-    parser.add_argument('--mask_flares',action='store_true', help='mask flared pixels from output matched filter')         
-    parser.add_argument('--ppm_scaling', type=float, default=100000.0, help='scaling factor to unit convert outputs - based on target')         
-    parser.add_argument('--ace_filter', action='store_true', help='Use the Adaptive Cosine Estimator (ACE) Filter')    
-    parser.add_argument('--target_scaling', type=str,choices=['mean','pixel'],default='mean', help='value to scale absorption coefficients by')    
-    parser.add_argument('--nodata_value', type=float, default=-9999, help='output nodata value')         
-    parser.add_argument('--flare_outfile', type=str, default=None, help='output geojson to write flare location centers')         
-    parser.add_argument('--chunksize', type=int, default=None, help='chunk radiance (for memory issues with large scenes)')         
-    parser.add_argument('--loglevel', type=str, default='DEBUG', help='logging verbosity')    
-    parser.add_argument('--logfile', type=str, default=None, help='output file to write log to')         
+    parser.add_argument('--ray_temp_dir', type=str, default=None, help='ray temp directory (None (default))')
+    parser.add_argument('--wavelength_range', nargs='+', type=float, default=None, help='wavelengths to use: None = default for gas, 2x values = min/max pairs of regions')
+    parser.add_argument('--remove_dominant_pcs',action='store_true', help='remove dominant PCs from covariance calculation')
+    parser.add_argument('--subsample_strategy',type=str,choices=['random','spatial_blocks'], help='sampling strategy for mc runs')
+    parser.add_argument('--l1b_bandmask_file',type=str,default=None, help='path to the l1b bandmask file for saturation')
+    parser.add_argument('--l2a_mask_file', type=str,  help='path to l2a mask image for clouds and water')
+    parser.add_argument('--mask_clouds_water',action='store_true', help='mask clouds and water from output matched filter')
+    parser.add_argument('--mask_saturation',action='store_true', help='mask saturated pixels from output matched filter')
+    parser.add_argument('--mask_flares',action='store_true', help='mask flared pixels from output matched filter')
+    parser.add_argument('--ppm_scaling', type=float, default=100000.0, help='scaling factor to unit convert outputs - based on target')
+    parser.add_argument('--ace_filter', action='store_true', help='Use the Adaptive Cosine Estimator (ACE) Filter')
+    parser.add_argument('--target_scaling', type=str,choices=['mean','pixel'],default='mean', help='value to scale absorption coefficients by')
+    parser.add_argument('--nodata_value', type=float, default=-9999, help='output nodata value')
+    parser.add_argument('--flare_outfile', type=str, default=None, help='output geojson to write flare location centers')
+    parser.add_argument('--chunksize', type=int, default=None, help='chunk radiance (for memory issues with large scenes)')
+    parser.add_argument('--loglevel', type=str, default='DEBUG', help='logging verbosity')
+    parser.add_argument('--logfile', type=str, default=None, help='output file to write log to')
     args = parser.parse_args(input_args)
 
     #Set up logging
     logging.basicConfig(format='%(levelname)s:%(asctime)s ||| %(message)s', level=args.loglevel,
                         filename=args.logfile, datefmt='%Y-%m-%d,%H:%M:%S')
-   
-    
+
+
     logging.info('Started processing input file: "%s"'%str(args.radiance_file))
     ds = envi.open(envi_header(args.radiance_file),image=args.radiance_file)
     if 'wavelength' not in ds.metadata:
@@ -122,7 +123,7 @@ def main(input_args=None):
     outmeta['bands'] = 1
     outmeta['description'] = 'Matched Filter Results'
     outmeta['band names'] = 'Matched Filter'
-    outmeta['interleave'] = 'bil'    
+    outmeta['interleave'] = 'bil'
     outmeta['z plot range'] = '{0, 1500}' #adapt to include co2
     outmeta['data ignore value'] = args.nodata_value
     for kwarg in ['smoothing factors','wavelength','wavelength units','fwhm']:
@@ -133,7 +134,7 @@ def main(input_args=None):
     output_shape = (int(outmeta['lines']),int(outmeta['bands']),int(outmeta['samples']))
     write_bil_chunk(np.ones(output_shape)*args.nodata_value, args.output_file, 0, output_shape)
 
- 
+
     if args.chunksize is None:
         chunk_edges = [0, output_shape[0]]
     else:
@@ -150,7 +151,7 @@ def main(input_args=None):
     absorption_coefficients_id = ray.put(absorption_coefficients)
     del absorption_coefficients
     for _ce, ce in enumerate(chunk_edges[:-1]):
-        
+
         if rdn_id is not None:
             del rdn_id; rdn_id = None
         logging.info(f"load radiance for chunk {_ce +1} / {len(chunk_edges) - 1}")
@@ -182,7 +183,7 @@ def main(input_args=None):
         logging.info('initializing ray, adding data to shared memory')
 
         rdn_id = ray.put(radiance)
-        del radiance 
+        del radiance
 
 
         logging.info('Run jobs')
@@ -194,7 +195,7 @@ def main(input_args=None):
         for ret in rreturn:
             if ret[0] is not None:
                 output_dat[:, 0, ret[1]] = ret[0][:,0]
-    
+
         if args.mask_clouds_water and clouds_and_surface_water_mask is not None:
             logging.info('Masking clouds and water')
             output_dat = output_dat.transpose((0,2,1))
@@ -251,21 +252,21 @@ def write_hotspot_vector(output_file, flares, saturation):
                                         "type":"Feature"})
 
     with open(output_file, 'w') as fout:
-        fout.write(json.dumps(outdict, cls=SerialEncoder)) 
+        fout.write(json.dumps(outdict, cls=SerialEncoder))
 
 
 def fit_looshrinkage_alpha(data, alphas, I_reg=[]):
     # loocv shrinkage estimation via Theiler et al.
-    stability_scaling=100.0 
+    stability_scaling=100.0
     nchan = data.shape[1]
 
     nll = np.zeros(len(alphas))
     n = data.shape[0]
-    
+
     X = data*stability_scaling
     S = cov(X)
     T = np.diag(np.diag(S)) if len(I_reg)==0 else cov(I_reg*stability_scaling)
-        
+
     nchanlog2pi = nchan*np.log(2.0*np.pi)
     nll[:] = np.inf
 
@@ -276,10 +277,10 @@ def fit_looshrinkage_alpha(data, alphas, I_reg=[]):
             # Proc. SPIE, 2012. eqn. 29
             beta = (1.0-alpha) / (n-1.0)
             G_alpha = n * (beta*S) + (alpha*T)
-            G_det = scipy.linalg.det(G_alpha, check_finite=False)
+            G_det = linalg.det(G_alpha, check_finite=False)
             if G_det==0:
                 continue
-            r_k  = (X.dot(scipy.linalg.inv(G_alpha, check_finite=False)) * X).sum(axis=1)
+            r_k  = (X.dot(linalg.inv(G_alpha, check_finite=False)) * X).sum(axis=1)
             q = 1.0 - beta * r_k
             nll[i] = 0.5*(nchanlog2pi+np.log(G_det))+1.0/(2.0*n) * \
                      (np.log(q)+(r_k/q)).sum()
@@ -292,7 +293,7 @@ def fit_looshrinkage_alpha(data, alphas, I_reg=[]):
     else:
         mindex = -1
         alpha = 0.0
-    
+
     return alpha
 
 
@@ -315,8 +316,8 @@ def apply_looshrinkage_alpha(data:np.array, alpha: float, I_reg=[]):
         T = np.diag(np.diag(S))
     else:
         T = cov(I_reg)
-        
-    # Final covariance 
+
+    # Final covariance
     C = (1.0 - alpha) * S + alpha * T
 
     return C
@@ -384,7 +385,7 @@ def calculate_saturation_mask(bandmask_file: str, radiance: np.array, dilation_i
 
 
 def calculate_flare_mask(radiance: np.array, preflagged_pixels: np.array, wavelengths: np.array):
-    b270_idx = np.argmin(np.abs(wavelengths - 2389.486)) 
+    b270_idx = np.argmin(np.abs(wavelengths - 2389.486))
     hot_mask = np.where(np.logical_and(radiance[:,b270_idx,:] > 1.5, preflagged_pixels == True), 1., 0.)
     hot_mask_dilated = scipy.ndimage.uniform_filter(hot_mask, [5,5]) > 0.01
     return hot_mask_dilated, hot_mask
@@ -417,20 +418,20 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
     if len(good_pixel_idx) < 10:
         logging.debug('Too few good pixels found in col {col}: skipping')
         return None, None
-    
+
     # array to hold results in
     mf_mc = np.ones((rdn.shape[0],args.n_mc)) * args.nodata_value
 
     np.random.seed(13)
     for _mc in range(args.n_mc):
-        
+
         # get subset of pixels to use for covariance / mean estimates
         cov_subset = get_mc_subset(_mc, args, good_pixel_idx)
 
         # optional radiance adjustment for max radiance pcs...experimental
         if args.remove_dominant_pcs:
-            pca_mean = rdn[cov_subset,:].mean(axis=0) 
-            pcavals, pcavec = scipy.linalg.eigh(cov(rdn - pca_mean))
+            pca_mean = rdn[cov_subset,:].mean(axis=0)
+            pcavals, pcavec = linalg.eigh(cov(rdn - pca_mean))
             loc_rdn = (rdn - pca_mean ) @ pcavec[:,:-5]
             target = (absorption_coefficients.copy() * pca_mean) @ pcavec[:,:-5]
         else:
@@ -440,7 +441,7 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
         # calculate covariance and mean
         try:
             C = calculate_mf_covariance(loc_rdn[cov_subset,:], args.covariance_style, args.fixed_alpha)
-            Cinv = scipy.linalg.inv(C, check_finite=False)
+            Cinv = linalg.inv(C, check_finite=False)
         except np.linalg.LinAlgError:
             logging.warn('singular matrix. skipping this column')
             return None, None
@@ -453,10 +454,10 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
             normalizer = normalizer * rx
 
         mf = ((loc_rdn[no_radiance_mask,:] - mu).dot(Cinv).dot(target.T)) / normalizer
-        
+
         # scale outputs
         mf_mc[no_radiance_mask,_mc] = mf * args.ppm_scaling
-    
+
     output = np.vstack([np.mean(mf_mc,axis=-1), np.std(mf_mc,axis=-1)]).T
     output[np.logical_not(no_radiance_mask),:] = args.nodata_value
 
@@ -467,7 +468,3 @@ def mf_one_column(col: int, rdn_full: np.array, absorption_coefficients: np.arra
 if __name__ == '__main__':
     main()
     ray.shutdown()
-
-
-
-
