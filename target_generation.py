@@ -28,8 +28,8 @@ import h5py
 
 def check_param(value, min, max, name):
     if value < min or value > max:
-        raise ValueError(f'The value for {name} exceeds the sampled parameter space.'
-                         f'The limits are[{min}, {max}], requested {value}.')
+        raise ValueError('The value for {name} exceeds the sampled parameter space.'
+                         'The limits are[{min}, {max}], requested {value}.')
 
 
 @np.vectorize
@@ -134,7 +134,7 @@ def spline_5deg_lookup(grid_data, zenith=0, sensor=120, ground=0, water=0, conc=
     return lookup.squeeze()
 
 
-def load_ch4_dataset(dataset_path):
+def load_ch4_dataset():
     # filename = 'modtran_ch4_full/dataset_ch4_full.npz'
     # correcthash = '6d2a7f0d566e5fd45221834b409d724a5397686a1686054f3d96e1f80e2d006d'
     # import hashlib
@@ -143,11 +143,11 @@ def load_ch4_dataset(dataset_path):
     # if correcthash != filehash:
     #     raise RuntimeError('Dataset file is invalid.')
     # datafile = np.load(filename)
-    datafile = h5py.File(dataset_path, 'r', rdcc_nbytes=4194304)
+    datafile = h5py.File('/beegfs/scratch/jchapman/CO2CH4TargetGen/dataset_ch4_full.hdf5', 'r', rdcc_nbytes=4194304)
     return datafile['modtran_data'], datafile['modtran_param'], datafile['wave'], 'ch4'
 
 
-def load_co2_dataset(dataset_path):
+def load_co2_dataset():
     # filename = 'modtran_co2_full/dataset_co2_full.npz'
     # correcthash = 'b5ce28c2fc27c1713a6175ae61c8c4b7699a431b6d309a7121919e412d608527'
     # import hashlib
@@ -156,7 +156,7 @@ def load_co2_dataset(dataset_path):
     # if correcthash != filehash:
     #     raise RuntimeError('Dataset file is invalid.')
     # datafile = np.load(filename)
-    datafile = h5py.File(dataset_path, 'r', rdcc_nbytes=4194304)
+    datafile = h5py.File('/beegfs/scratch/jchapman/CO2CH4TargetGen/dataset_co2_full.hdf5', 'r', rdcc_nbytes=4194304)
     return datafile['modtran_data'], datafile['modtran_param'], datafile['wave'], 'co2'
 
 
@@ -249,7 +249,6 @@ def main(input_args=None):
                         required=True, help='Column water vapor (in cm).')
     parser.add_argument('--order', choices=(1, 3), default=1,
                         type=int, required=False, help='Spline interpolation degree.')
-    parser.add_argument('--dataset', type=str, required=True, help='Path to gas dataset.')
     gas = parser.add_mutually_exclusive_group(required=False)
     gas.add_argument('--co2', action='store_const', dest='gas', const='co2')
     gas.add_argument('--ch4', action='store_const', dest='gas', const='ch4')
@@ -258,7 +257,6 @@ def main(input_args=None):
         '--hdr', type=str, help='ENVI Header file for the flightline to match band centers/fwhm.')
     wave.add_argument('--txt', type=str,
                       help='Text-based table for band centers/fwhm.')
-
     parser.add_argument('--source', type=str,
                         choices=['full', 'pca'], default='full')
     parser.add_argument('-o', '--output', type=str,
@@ -266,7 +264,6 @@ def main(input_args=None):
     parser.add_argument('--concentrations', type=float, default=None,
                         required=False, nargs='+', help='override the ppmm lookup values')
     parser.set_defaults(gas='ch4')
-
     args = parser.parse_args(input_args)
     param = {'zenith': args.zenith_angle,
              # Model uses sensor height above ground
@@ -287,9 +284,9 @@ def main(input_args=None):
             'Failed to load band centers and fwhm from file. Check that the specified file exists.')
     concentrations = args.concentrations
     if 'ch4' in args.gas:
-        dataset_fcn = load_ch4_dataset(args.dataset) if 'full' in args.source else load_pca_dataset
+        dataset_fcn = load_ch4_dataset if 'full' in args.source else load_pca_dataset
     elif 'co2' in args.gas:
-        dataset_fcn = load_co2_dataset(args.dataset)
+        dataset_fcn = load_co2_dataset
     uas = generate_template_from_bands(centers, fwhm, param,
                                        concentrations=concentrations, dataset_loader=dataset_fcn)
     np.savetxt(args.output, uas, delimiter=' ',
